@@ -1,4 +1,10 @@
 <?php
+
+namespace BundleName\Service;
+
+use Monolog\Logger;
+use Symfony\Component\HttpFoundation\Session\Session;
+
 /**
  * This file is part of the art-of-wifi/unifi-api-client package
  *
@@ -13,7 +19,7 @@
  * This source file is subject to the MIT license that is bundled
  * with this package in the file LICENSE.md
  */
-namespace UniFi_API;
+
 
 class Client
 {
@@ -31,8 +37,10 @@ class Client
     private $request_type = 'POST';
     private $last_results_raw;
     private $last_error_message;
+    private $session;
+    private $logger;
 
-    function __construct($user, $password, $baseurl = '', $site = '', $version = '')
+    function __construct($user, $password, $baseurl = '', $site = '', $version = '', Session $session = null, Logger $logger = null)
     {
         if (!extension_loaded('curl')) {
             trigger_error('The PHP curl extension is not loaded! Please correct this before proceeding!');
@@ -54,6 +62,19 @@ class Client
         if (empty($base_url_components['scheme']) || empty($base_url_components['host']) || empty($base_url_components['port'])) {
             trigger_error('The URL provided is incomplete!');
         }
+
+        if($logger) {
+            $this->logger = $logger;
+        }
+
+
+        if($session) {
+            $this->session = $session;
+            if ($session->get('unificookie')) {
+                $this->cookies = $session->get('unificookie');
+            }
+        }
+
     }
 
     function __destruct()
@@ -61,7 +82,13 @@ class Client
         /**
          * if user has $_SESSION['unificookie'] set, do not logout here
          */
-        if (isset($_SESSION['unificookie'])) return;
+        try {
+            if ($this->session && $this->session->get('unificookie')) return;
+        } catch (\RuntimeException $e) {
+            if ($this->is_loggedin) {
+                $this->logout();
+            }
+        }
 
         /**
          * logout, if needed
@@ -77,10 +104,11 @@ class Client
         /**
          * if user has $_SESSION['unificookie'] set, skip the login ;)
          */
-        if (isset($_SESSION['unificookie'])) {
+        if ($this->session && $this->session->get('unificookie')) {
             $this->is_loggedin = true;
             return $this->is_loggedin;
         }
+
 
         $ch = $this->get_curl_obj();
 
@@ -118,12 +146,15 @@ class Client
                 if (($code >= 200) && ($code < 400)) {
                     if (strpos($this->cookies, 'unifises') !== false) {
                         $this->is_loggedin = true;
+                        if($this->session) {
+                            $this->session->set('unificookie', $this->cookies);
+                        }
                     }
                 }
 
                 if ($code === 400) {
-                     trigger_error('We have received an HTTP response status: 400. Probably a controller login failure');
-                     return $code;
+                    trigger_error('We have received an HTTP response status: 400. Probably a controller login failure');
+                    return $code;
                 }
             }
         }
@@ -232,7 +263,7 @@ class Client
      * --------------------------------
      * returns the UniFi controller cookie
      */
-    public function get_cookie()
+    public function getcookie()
     {
         if (!$this->is_loggedin) return false;
         return $this->cookies;
@@ -573,7 +604,7 @@ class Client
     public function stat_client($client_mac)
     {
         if (!$this->is_loggedin) return false;
-	    $content_decoded = json_decode($this->exec_curl($this->baseurl.'/api/s/'.$this->site.'/stat/user/'.trim($client_mac)));
+        $content_decoded = json_decode($this->exec_curl($this->baseurl.'/api/s/'.$this->site.'/stat/user/'.trim($client_mac)));
         return $this->process_response($content_decoded);
     }
 
@@ -600,7 +631,7 @@ class Client
     {
         if (!$this->is_loggedin) return false;
         $json            = json_encode(['usergroup_id' => $group_id]);
-	    $content_decoded = json_decode($this->exec_curl($this->baseurl.'/api/s/'.$this->site.'/upd/user/'.trim($user_id), 'json='.$json));
+        $content_decoded = json_decode($this->exec_curl($this->baseurl.'/api/s/'.$this->site.'/upd/user/'.trim($user_id), 'json='.$json));
         return $this->process_response_boolean($content_decoded);
     }
 
@@ -1531,7 +1562,7 @@ class Client
      * List Radius user accounts (using REST)
      * --------------------------------------
      * returns an array of objects containing all Radius accounts for the current site
-	 *
+     *
      * NOTES:
      * - this function/method is only supported on controller versions 5.5.19 and later
      */
@@ -1725,8 +1756,8 @@ class Client
             /**
              * explicitly unset the old cookie now
              */
-            if (isset($_SESSION['unificookie'])) {
-                unset($_SESSION['unificookie']);
+            if ($this->session && $this->session->get('unificookie')) {
+                $this->session->set('unificookie', null);
                 $have_cookie_in_use = 1;
             }
 
@@ -1741,8 +1772,11 @@ class Client
                 /**
                  * setup the cookie for the user within $_SESSION
                  */
-                if (isset($have_cookie_in_use) && session_status() != PHP_SESSION_DISABLED) {
-                    $_SESSION['unificookie'] = $this->cookies;
+                if (isset($have_cookie_in_use)) {
+                    if($this->session) {
+                        $this->session->set('unificookie', $this->cookies);
+                    }
+
                     unset($have_cookie_in_use);
                 }
 
