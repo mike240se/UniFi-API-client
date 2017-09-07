@@ -53,10 +53,6 @@ class Client
         if (!empty($site)) $this->site       = trim($site);
         if (!empty($version)) $this->version = trim($version);
 
-        if (isset($_SESSION['unificookie'])) {
-            $this->cookies = $_SESSION['unificookie'];
-        }
-
         $base_url_components = parse_url($this->baseurl);
 
         if (empty($base_url_components['scheme']) || empty($base_url_components['host']) || empty($base_url_components['port'])) {
