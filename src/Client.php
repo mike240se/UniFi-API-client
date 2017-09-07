@@ -259,7 +259,7 @@ class Client
      * --------------------------------
      * returns the UniFi controller cookie
      */
-    public function getcookie()
+    public function get_cookie()
     {
         if (!$this->is_loggedin) return false;
         return $this->cookies;
