@@ -26,24 +26,21 @@ class Client
     /**
      * private properties
      */
-    private $user;
-    private $password;
-    private $baseurl      = 'https://127.0.0.1:8443';
-    private $site         = 'default';
-    private $version      = '5.4.16';
-    private $debug        = false;
-    private $is_loggedin  = false;
-    private $cookies      = '';
-    private $request_type = 'POST';
-    private $last_results_raw;
-    private $last_error_message;
-    private $session;
-    private $logger;
+    private $baseurl            = 'https://127.0.0.1:8443';
+    private $site               = 'default';
+    private $version            = '5.4.16';
+    private $debug              = false;
+    private $is_loggedin        = false;
+    private $cookies            = '';
+    private $request_type       = 'POST';
+    private $connect_timeout    = 10;
+    private $last_results_raw   = null;
+    private $last_error_message = null;
 
     function __construct($user, $password, $baseurl = '', $site = '', $version = '', Session $session = null, Logger $logger = null)
     {
         if (!extension_loaded('curl')) {
-            trigger_error('The PHP curl extension is not loaded! Please correct this before proceeding!');
+            trigger_error('The PHP curl extension is not loaded. Please correct this before proceeding!');
         }
 
         $this->user     = trim($user);
@@ -113,7 +110,12 @@ class Client
         curl_setopt($ch, CURLOPT_URL, $this->baseurl.'/api/login');
         curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode(['username' => $this->user, 'password' => $this->password]));
 
-        if (($content = curl_exec($ch)) === false) {
+        /**
+         * execute the cURL request
+         */
+        $content = curl_exec($ch);
+
+        if (curl_errno($ch)) {
             trigger_error('cURL error: '.curl_error($ch));
         }
 
@@ -186,6 +188,11 @@ class Client
      */
     public function set_site($site)
     {
+
+        if (strlen($site) === 8 || $site === 'default') {
+            error_log('The provided (short) site name is probably incorrect');
+        }
+
         $this->site = $site;
 
         return $this->site;
@@ -209,10 +216,12 @@ class Client
      */
     public function set_debug($enable)
     {
-        if ($enable) {
+        if ($enable === true) {
             $this->debug = true;
+            return true;
         } elseif ($enable === false) {
             $this->debug = false;
+            return true;
         }
 
         return false;
@@ -221,15 +230,13 @@ class Client
     /**
      * Get last raw results
      * --------------------
-     * returns the raw results of the last method called in PHP stdClass Object format by default, returns false if not set
-     * optional parameter <return_json> = boolean; true will return the results in "pretty printed" json format
-     *
-     * NOTE:
-     * this method can be used to get the full error as returned by the controller
+     * returns the raw results of the last method called, returns false if unavailable
+     * optional parameter <return_json> = boolean; true will return the results in "pretty printed" json format,
+     *                                    PHP stdClass Object format is returned by default
      */
     public function get_last_results_raw($return_json = false)
     {
-        if ($this->last_results_raw != null) {
+        if ($this->last_results_raw !== null) {
             if ($return_json) {
                 return json_encode($this->last_results_raw, JSON_PRETTY_PRINT);
             }
@@ -243,11 +250,11 @@ class Client
     /**
      * Get last error message
      * ----------------------
-     * returns the error message of the last method called in PHP stdClass Object format, returns false if not set
+     * returns the error message of the last method called in PHP stdClass Object format, returns false if unavailable
      */
     public function get_last_error_message()
     {
-        if (isset($this->last_error_message)) {
+        if ($this->last_error_message  !== null) {
             return $this->last_error_message;
         }
 
@@ -652,14 +659,14 @@ class Client
     }
 
     /**
-     * Add user group (using REST)
+     * Create user group (using REST)
      * ---------------------------
      * returns an array containing a single object with attributes of the new usergroup ("_id", "name", "qos_rate_max_down", "qos_rate_max_up", "site_id") on success
      * required parameter <group_name> = name of the user group
      * optional parameter <group_dn>   = limit download bandwidth in Kbps (default = -1, which sets bandwidth to unlimited)
      * optional parameter <group_up>   = limit upload bandwidth in Kbps (default = -1, which sets bandwidth to unlimited)
      */
-    public function add_usergroup($group_name, $group_dn = -1, $group_up = -1)
+    public function create_usergroup($group_name, $group_dn = -1, $group_up = -1)
     {
         if (!$this->is_loggedin) return false;
         $json               = json_encode(['name' => $group_name, 'qos_rate_max_down' => $group_dn, 'qos_rate_max_up' => $group_up]);
@@ -785,14 +792,14 @@ class Client
     }
 
     /**
-     * Add a site
-     * ----------
+     * Create a site
+     * -------------
      * returns an array containing a single object with attributes of the new site ("_id", "desc", "name") on success
      * required parameter <description> = the long name for the new site
      *
      * NOTES: immediately after being added, the new site will be available in the output of the "list_sites" function
      */
-    public function add_site($description)
+    public function create_site($description)
     {
         if (!$this->is_loggedin) return false;
         $json            = json_encode(['desc' => $description, 'cmd' => 'add-site']);
@@ -864,18 +871,6 @@ class Client
     }
 
     /**
-     * List networkconf
-     * ----------------
-     * returns an array of network configuration data
-     */
-    public function list_networkconf()
-    {
-        if (!$this->is_loggedin) return false;
-        $content_decoded = json_decode($this->exec_curl($this->baseurl.'/api/s/'.$this->site.'/list/networkconf'));
-        return $this->process_response($content_decoded);
-    }
-
-    /**
      * List vouchers
      * -------------
      * returns an array of hotspot voucher objects
@@ -934,14 +929,14 @@ class Client
     }
 
     /**
-     * List hotspot operators
-     * ----------------------
+     * List hotspot operators (using REST)
+     * -----------------------------------
      * returns an array of hotspot operators
      */
     public function list_hotspotop()
     {
         if (!$this->is_loggedin) return false;
-        $content_decoded = json_decode($this->exec_curl($this->baseurl.'/api/s/'.$this->site.'/list/hotspotop'));
+        $content_decoded = json_decode($this->exec_curl($this->baseurl.'/api/s/'.$this->site.'/rest/hotspotop'));
         return $this->process_response($content_decoded);
     }
 
@@ -1211,8 +1206,8 @@ class Client
     }
 
     /**
-     * Set access point radio settings
-     * -------------------------------
+     * Update access point radio settings
+     * ----------------------------------
      * return true on success
      * required parameter <ap_id>
      * required parameter <radio>(default=ng)
@@ -1230,8 +1225,8 @@ class Client
     }
 
     /**
-     * Set guest login settings
-     * ------------------------
+     * Update guest login settings
+     * ---------------------------
      * return true on success
      * required parameter <portal_enabled>
      * required parameter <portal_customized>
@@ -1287,8 +1282,82 @@ class Client
     }
 
     /**
-     * Add a wlan
-     * ----------
+     * List network settings (using REST)
+     * ----------------------------------
+     * returns an array of (non-wireless) networks and their settings
+     */
+    public function list_networkconf()
+    {
+        if (!$this->is_loggedin) return false;
+        $content_decoded = json_decode($this->exec_curl($this->baseurl.'/api/s/'.$this->site.'/rest/networkconf'));
+        return $this->process_response($content_decoded);
+    }
+
+    /**
+     * Create a network (using REST)
+     * -----------------------------
+     * return an array with a single object containing details of the new network on success, else return false
+     * required parameter <network_settings> = stdClass object or associative array containing the configuration to apply to the network, must be a (partial)
+     *                                         object structured in the same manner as is returned by list_networkconf() for the specific network type.
+     *                                         Do not include the _id property, it will be assigned by the controller and returned upon success.
+     */
+    public function create_network($network_settings)
+    {
+        if (!$this->is_loggedin) return false;
+        $this->request_type = 'POST';
+        $json               = json_encode($network_settings);
+        $content_decoded    = json_decode($this->exec_curl($this->baseurl.'/api/s/'.$this->site.'/rest/networkconf/', 'json='.$json));
+        return $this->process_response($content_decoded);
+    }
+
+    /**
+     * Update network settings, base (using REST)
+     * ------------------------------------------
+     * return true on success
+     * required parameter <network_id>
+     * required parameter <network_settings> = stdClass object or associative array containing the configuration to apply to the network, must be a (partial)
+     *                                         object/array structured in the same manner as is returned by list_networkconf() for the network.
+     */
+    public function set_networksettings_base($network_id, $network_settings)
+    {
+        if (!$this->is_loggedin) return false;
+        $this->request_type = 'PUT';
+        $json               = json_encode($network_settings);
+        $content_decoded    = json_decode($this->exec_curl($this->baseurl.'/api/s/'.$this->site.'/rest/networkconf/'.trim($network_id), 'json='.$json));
+        return $this->process_response_boolean($content_decoded);
+    }
+
+    /**
+     * Delete a network (using REST)
+     * -----------------------------
+     * return true on success
+     * required parameter <network_id> = 24 char string; _id of the network which can be found with the list_networkconf() function
+     */
+    public function delete_network($network_id)
+    {
+        if (!$this->is_loggedin) return false;
+        $this->request_type = 'DELETE';
+        $content_decoded = json_decode($this->exec_curl($this->baseurl.'/api/s/'.$this->site.'/rest/networkconf/'.trim($network_id)));
+        return $this->process_response_boolean($content_decoded);
+    }
+
+    /**
+     * List wlan settings (using REST)
+     * -------------------------------
+     * returns an array of wireless networks and their settings, or an array containing a single wireless network when using
+     * the <wlan_id> parameter
+     * optional parameter <wlan_id> = 24 char string; _id of the wlan to fetch the settings for
+     */
+    public function list_wlanconf($wlan_id = null)
+    {
+        if (!$this->is_loggedin) return false;
+        $content_decoded = json_decode($this->exec_curl($this->baseurl.'/api/s/'.$this->site.'/rest/wlanconf/'.trim($wlan_id)));
+        return $this->process_response($content_decoded);
+    }
+
+    /**
+     * Create a wlan
+     * -------------
      * return true on success
      * required parameter <name>             = string; SSID
      * required parameter <x_passphrase>     = string; new pre-shared key, minimal length is 8 characters, maximum length is 63
@@ -1349,40 +1418,12 @@ class Client
     }
 
     /**
-     * List wlan settings (using REST)
-     * -------------------------------
-     * returns an array of wireless networks and their settings, or an array containing a single wireless network when using
-     * the <wlan_id> parameter
-     * optional parameter <wlan_id> = 24 char string; _id of the wlan to fetch the settings for
-     */
-    public function list_wlanconf($wlan_id = null)
-    {
-        if (!$this->is_loggedin) return false;
-        $content_decoded = json_decode($this->exec_curl($this->baseurl.'/api/s/'.$this->site.'/rest/wlanconf/'.trim($wlan_id)));
-        return $this->process_response($content_decoded);
-    }
-
-    /**
-     * Delete a wlan (using REST)
-     * --------------------------
-     * return true on success
-     * required parameter <wlan_id> = 24 char string; _id of the wlan that can be found with the list_wlanconf() function
-     */
-    public function delete_wlan($wlan_id)
-    {
-        if (!$this->is_loggedin) return false;
-        $this->request_type = 'DELETE';
-        $content_decoded    = json_decode($this->exec_curl($this->baseurl.'/api/s/'.$this->site.'/rest/wlanconf/'.trim($wlan_id)));
-        return $this->process_response_boolean($content_decoded);
-    }
-
-    /**
-     * Set wlan settings, base (using REST)
-     * ------------------------------------
+     * Update wlan settings, base (using REST)
+     * ---------------------------------------
      * return true on success
      * required parameter <wlan_id>
-     * required parameter <wlan_settings> = stdClass object containing the configuration of the wlan to apply, must be a (partial) object structured
-     *                                      in the same manner as is returned by list_wlanconf() for a specific wlan)
+     * required parameter <wlan_settings> = stdClass object or associative array containing the configuration to apply to the wlan, must be a
+     *                                      (partial) object/array structured in the same manner as is returned by list_wlanconf() for the wlan.
      */
     public function set_wlansettings_base($wlan_id, $wlan_settings)
     {
@@ -1394,8 +1435,8 @@ class Client
     }
 
     /**
-     * Set basic wlan settings
-     * -----------------------
+     * Update basic wlan settings
+     * --------------------------
      * return true on success
      * required parameter <wlan_id>
      * required parameter <x_passphrase> = new pre-shared key, minimal length is 8 characters, maximum length is 63,
@@ -1426,7 +1467,21 @@ class Client
     }
 
     /**
-     * Set MAC filter for a wlan
+     * Delete a wlan (using REST)
+     * --------------------------
+     * return true on success
+     * required parameter <wlan_id> = 24 char string; _id of the wlan which can be found with the list_wlanconf() function
+     */
+    public function delete_wlan($wlan_id)
+    {
+        if (!$this->is_loggedin) return false;
+        $this->request_type = 'DELETE';
+        $content_decoded = json_decode($this->exec_curl($this->baseurl.'/api/s/'.$this->site.'/rest/wlanconf/'.trim($wlan_id)));
+        return $this->process_response_boolean($content_decoded);
+    }
+
+    /**
+     * Update MAC filter for a wlan
      * ----------------------------
      * return true on success
      * required parameter <wlan_id>
@@ -1555,6 +1610,21 @@ class Client
     }
 
     /**
+     * List Radius profiles (using REST)
+     * --------------------------------------
+     * returns an array of objects containing all Radius profiles for the current site
+     *
+     * NOTES:
+     * - this function/method is only supported on controller versions 5.5.19 and later
+     */
+    public function list_radius_profiles()
+    {
+        if (!$this->is_loggedin) return false;
+        $content_decoded = json_decode($this->exec_curl($this->baseurl.'/api/s/'.$this->site.'/rest/radiusprofile'));
+        return $this->process_response($content_decoded);
+    }
+
+    /**
      * List Radius user accounts (using REST)
      * --------------------------------------
      * returns an array of objects containing all Radius accounts for the current site
@@ -1567,6 +1637,100 @@ class Client
         if (!$this->is_loggedin) return false;
         $content_decoded = json_decode($this->exec_curl($this->baseurl.'/api/s/'.$this->site.'/rest/account'));
         return $this->process_response($content_decoded);
+    }
+
+    /**
+     * Create a Radius user account (using REST)
+     * -----------------------------------------
+     * returns an array containing a single object for the newly created account upon success, else returns false
+     * required parameter <name>               = string; name for the new account
+     * required parameter <x_password>         = string; password for the new account
+     * required parameter <tunnel_type>        = integer; must be one of the following values:
+     *                                              1      Point-to-Point Tunneling Protocol (PPTP)
+     *                                              2      Layer Two Forwarding (L2F)
+     *                                              3      Layer Two Tunneling Protocol (L2TP)
+     *                                              4      Ascend Tunnel Management Protocol (ATMP)
+     *                                              5      Virtual Tunneling Protocol (VTP)
+     *                                              6      IP Authentication Header in the Tunnel-mode (AH)
+     *                                              7      IP-in-IP Encapsulation (IP-IP)
+     *                                              8      Minimal IP-in-IP Encapsulation (MIN-IP-IP)
+     *                                              9      IP Encapsulating Security Payload in the Tunnel-mode (ESP)
+     *                                              10     Generic Route Encapsulation (GRE)
+     *                                              11     Bay Dial Virtual Services (DVS)
+     *                                              12     IP-in-IP Tunneling
+     *                                              13     Virtual LANs (VLAN)
+     * required parameter <tunnel_medium_type> = integer; must be one of the following values:
+     *                                              1      IPv4 (IP version 4)
+     *                                              2      IPv6 (IP version 6)
+     *                                              3      NSAP
+     *                                              4      HDLC (8-bit multidrop)
+     *                                              5      BBN 1822
+     *                                              6      802 (includes all 802 media plus Ethernet "canonical format")
+     *                                              7      E.163 (POTS)
+     *                                              8      E.164 (SMDS, Frame Relay, ATM)
+     *                                              9      F.69 (Telex)
+     *                                              10     X.121 (X.25, Frame Relay)
+     *                                              11     IPX
+     *                                              12     Appletalk
+     *                                              13     Decnet IV
+     *                                              14     Banyan Vines
+     *                                              15     E.164 with NSAP format subaddress
+     * optional parameter <vlan>               = integer; VLAN to assign to the account
+     *
+     * NOTES:
+     * - this function/method is only supported on controller versions 5.5.19 and later
+     */
+    public function create_radius_account($name, $x_password, $tunnel_type, $tunnel_medium_type, $vlan = null)
+    {
+        if (!$this->is_loggedin) return false;
+        $this->request_type = 'POST';
+        $account_details    = [
+            'name'               => $name,
+            'x_password'         => $x_password,
+            'tunnel_type'        => (int) $tunnel_type,
+            'tunnel_medium_type' => (int) $tunnel_medium_type
+        ];
+        if (isset($vlan)) $account_details['vlan'] = (int) $vlan;
+        $json               = json_encode($account_details);
+        $content_decoded    = json_decode($this->exec_curl($this->baseurl.'/api/s/'.$this->site.'/rest/account', 'json='.$json));
+        return $this->process_response($content_decoded);
+    }
+
+    /**
+     * Update Radius account, base (using REST)
+     * ----------------------------------------
+     * return true on success
+     * required parameter <account_id>      = 24 char string; _id of the account which can be found with the list_radius_accounts() function
+     * required parameter <account_details> = stdClass object or associative array containing the new profile to apply to the account, must be a (partial)
+     *                                         object/array structured in the same manner as is returned by list_radius_accounts() for the account.
+     *
+     * NOTES:
+     * - this function/method is only supported on controller versions 5.5.19 and later
+     */
+    public function set_radius_account_base($account_id, $account_details)
+    {
+        if (!$this->is_loggedin) return false;
+        $this->request_type = 'PUT';
+        $json               = json_encode($account_details);
+        $content_decoded    = json_decode($this->exec_curl($this->baseurl.'/api/s/'.$this->site.'/rest/account/'.trim($account_id), 'json='.$json));
+        return $this->process_response_boolean($content_decoded);
+    }
+
+    /**
+     * Delete a Radius account (using REST)
+     * ------------------------------------
+     * return true on success
+     * required parameter <account_id> = 24 char string; _id of the account which can be found with the list_radius_accounts() function
+     *
+     * NOTES:
+     * - this function/method is only supported on controller versions 5.5.19 and later
+     */
+    public function delete_radius_account($account_id)
+    {
+        if (!$this->is_loggedin) return false;
+        $this->request_type = 'DELETE';
+        $content_decoded = json_decode($this->exec_curl($this->baseurl.'/api/s/'.$this->site.'/rest/account/'.trim($account_id)));
+        return $this->process_response_boolean($content_decoded);
     }
 
     /****************************************************************
@@ -1600,6 +1764,7 @@ class Client
             'Function set_locate_ap() has been deprecated, use locate_ap() instead.',
             E_USER_DEPRECATED
         );
+
         return $this->locate_ap($mac, true);
     }
 
@@ -1615,6 +1780,7 @@ class Client
             'Function unset_locate_ap() has been deprecated, use locate_ap() instead.',
             E_USER_DEPRECATED
         );
+
         return $this->locate_ap($mac, false);
     }
 
@@ -1629,6 +1795,7 @@ class Client
             'Function site_ledson() has been deprecated, use site_leds() instead.',
             E_USER_DEPRECATED
         );
+
         return $this->site_leds(true);
     }
 
@@ -1643,6 +1810,7 @@ class Client
             'Function site_ledsoff() has been deprecated, use site_leds() instead.',
             E_USER_DEPRECATED
         );
+
         return $this->site_leds(false);
     }
 
@@ -1674,7 +1842,7 @@ class Client
                 }
 
                 if ($this->debug) {
-                    trigger_error('Debug: Last error message: ' . $this->last_error_message);
+                    trigger_error('Debug: Last error message: '.$this->last_error_message);
                 }
             }
         }
@@ -1702,7 +1870,7 @@ class Client
                 }
 
                 if ($this->debug) {
-                    trigger_error('Debug: Last error message: ' . $this->last_error_message);
+                    trigger_error('Debug: Last error message: '.$this->last_error_message);
                 }
             }
         }
@@ -1717,6 +1885,7 @@ class Client
     {
         $ch = $this->get_curl_obj();
         curl_setopt($ch, CURLOPT_URL, $url);
+        curl_setopt($ch, CURLINFO_HEADER_OUT, true);
 
         if (trim($data) != '') {
             curl_setopt($ch, CURLOPT_POSTFIELDS, $data);
@@ -1734,7 +1903,12 @@ class Client
             }
         }
 
-        if (($content = curl_exec($ch)) === false) {
+        /**
+         * execute the cURL request
+         */
+        $content = curl_exec($ch);
+
+        if (curl_errno($ch)) {
             trigger_error('cURL error: '.curl_error($ch));
         }
 
@@ -1742,9 +1916,10 @@ class Client
          * has the session timed out?
          */
         $httpcode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $strerr   = '{ "data" : [ ] , "meta" : { "msg" : "api.err.LoginRequired" , "rc" : "error"}}';
 
-        if ($httpcode == 401 && strcmp($content, $strerr) == 0) {
+        $json_decoded_content = json_decode($content, true);
+
+        if ($httpcode == 401 && isset($json_decoded_content['meta']['msg']) && $json_decoded_content['meta']['msg'] === 'api.err.LoginRequired') {
             if ($this->debug) {
                 error_log('cURL debug: Needed reconnect to UniFi Controller');
             }
@@ -1794,6 +1969,12 @@ class Client
         }
 
         curl_close($ch);
+
+        /**
+         * set request_type value back to default, just in case
+         */
+        $this->request_type = 'POST';
+
         return $content;
     }
 
@@ -1807,6 +1988,7 @@ class Client
         curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
         curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, $this->connect_timeout);
 
         if ($this->debug) {
             curl_setopt($ch, CURLOPT_VERBOSE, true);
