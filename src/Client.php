@@ -50,22 +50,25 @@ class Client
         if (!empty($site)) $this->site       = trim($site);
         if (!empty($version)) $this->version = trim($version);
 
+        if($session) {
+            $this->session = $session;
+            if ($session->get('unificookie')) {
+                $this->cookies = $session->get('unificookie');
+            }
+        }
+
         $base_url_components = parse_url($this->baseurl);
 
         if (empty($base_url_components['scheme']) || empty($base_url_components['host']) || empty($base_url_components['port'])) {
             trigger_error('The URL provided is incomplete!');
         }
 
-        if($logger) {
-            $this->logger = $logger;
+        if (strlen($this->site) !== 8 && $this->site !== 'default' && $this->debug) {
+            error_log('The provided (short) site name is probably incorrect');
         }
 
-
-        if($session) {
-            $this->session = $session;
-            if ($session->get('unificookie')) {
-                $this->cookies = $session->get('unificookie');
-            }
+        if($logger) {
+            $this->logger = $logger;
         }
 
     }
